@@ -60,6 +60,10 @@ int BPF_KPROBE(btrfs_recover_log_trees, struct btrfs_root *root_tree) {
     BPF_CORE_READ_INTO(&evt.label, root_tree, fs_info, super_copy, label);
     BPF_CORE_READ_INTO(&evt.fsid, root_tree, fs_info, super_copy, fsid);
 
+    // This will be filled later in kretprobe but the verifier
+    // requires all fields to be initialized.
+    evt.ret = 0;
+
     bool *registered = bpf_map_lookup_elem(&registered_devices, &evt.dev_id);
     if (registered == NULL || !*registered) {
         return 0;
