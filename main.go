@@ -21,16 +21,14 @@ func main() {
 	if err != nil {
 		log.Fatal("Initializing btrfswatch:", err)
 	}
-	defer mgr.Close()
 
-	log.Println("Waiting...")
+	log.Printf("Listening at %s...", *socketName)
 
 	// exit the program when interrupted.
 	stop := make(chan os.Signal, 5)
 	signal.Notify(stop, os.Interrupt)
 
 	ebpfService, err := ebpfpb.NewService(ebpfpb.ServiceOpts{
-		Stop:          stop,
 		BtrfswatchMgr: mgr,
 	})
 	if err != nil {
@@ -49,4 +47,8 @@ func main() {
 	go grpcS.Serve(listener)
 
 	<-stop
+
+	log.Println("Shutting down...")
+	grpcS.GracefulStop()
+	mgr.Close()
 }

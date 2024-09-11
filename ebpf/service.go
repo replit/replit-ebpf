@@ -4,7 +4,6 @@ package ebpf
 import (
 	"errors"
 	"fmt"
-	"os"
 
 	"github.com/cilium/ebpf/ringbuf"
 	"github.com/google/uuid"
@@ -16,20 +15,17 @@ import (
 type Service struct {
 	UnimplementedEbpfServer
 
-	stop          <-chan (os.Signal)
 	btrfswatchMgr *btrfswatch.Manager
 }
 
 // ServiceOpts are the options that can be provided to NewService.
 type ServiceOpts struct {
-	Stop          <-chan (os.Signal)
 	BtrfswatchMgr *btrfswatch.Manager
 }
 
 // NewService returns a new instance of an Ebpf service.
 func NewService(opts ServiceOpts) (*Service, error) {
 	return &Service{
-		stop:          opts.Stop,
 		btrfswatchMgr: opts.BtrfswatchMgr,
 	}, nil
 }
@@ -45,14 +41,14 @@ func (s *Service) MonitorBtrfs(
 	}
 
 	go func() {
-		<-s.stop
+		<-stream.Context().Done()
 		rd.Close()
 	}()
 
 	for {
 		select {
-		case <-s.stop:
-			return errors.New("received stop signal, shutting down")
+		case <-stream.Context().Done():
+			return errors.New("stream context canceled")
 		default:
 		}
 
