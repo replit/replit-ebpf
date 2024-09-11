@@ -51,7 +51,6 @@ func NewManager() (*Manager, error) {
 	}
 	mgr.cleanups = append(mgr.cleanups, mgr.objs.Close)
 
-	// Attach count_packets to the network interface.
 	{
 		link, err := link.Kprobe("btrfs_recover_log_trees", mgr.objs.BtrfsRecoverLogTrees, &link.KprobeOptions{})
 		if err != nil {
