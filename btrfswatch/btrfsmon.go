@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"sync"
 
 	"github.com/cilium/ebpf/link"
 	"github.com/cilium/ebpf/ringbuf"
@@ -18,12 +19,22 @@ import (
 type Manager struct {
 	objs     btrfswatchObjects
 	cleanups []func() error
+	demux    *eventDemux
 }
 
 type Event btrfswatchEvent
 
-type EventReader struct {
+type eventDemux struct {
 	rd *ringbuf.Reader
+
+	devMapLock sync.RWMutex
+	devMap     map[uint32]chan Event
+}
+
+type EventReader struct {
+	dev       uint32
+	eventChan chan Event
+	mgr       *Manager
 }
 
 func NewManager() (*Manager, error) {
@@ -57,6 +68,14 @@ func NewManager() (*Manager, error) {
 		mgr.cleanups = append(mgr.cleanups, link.Close)
 	}
 
+	rd, err := ringbuf.NewReader(mgr.objs.BtrfsRecoverLogTreesErrors)
+	if err != nil {
+		return nil, fmt.Errorf("creating ringbuf reader: %w", err)
+	}
+	mgr.demux = newEventDemux(rd)
+	mgr.cleanups = append(mgr.cleanups, mgr.demux.close)
+	go mgr.demux.run()
+
 	return mgr, nil
 }
 
@@ -66,12 +85,24 @@ func (mgr *Manager) RegisterDevice(dev uint32) (*EventReader, error) {
 		return nil, fmt.Errorf("RegisteredDevices.Put: %w", err)
 	}
 
-	rd, err := ringbuf.NewReader(mgr.objs.BtrfsRecoverLogTreesErrors)
+	eventChan := make(chan Event, 1)
+	mgr.demux.addDevice(dev, eventChan)
+
+	return &EventReader{
+		dev:       dev,
+		eventChan: eventChan,
+		mgr:       mgr,
+	}, nil
+}
+
+func (mgr *Manager) UnregisterDevice(dev uint32) error {
+	err := mgr.objs.btrfswatchMaps.RegisteredDevices.Delete(dev)
 	if err != nil {
-		return nil, fmt.Errorf("creating ringbuf reader: %w", err)
+		return fmt.Errorf("RegisteredDevices.Delete: %w", err)
 	}
 
-	return &EventReader{rd}, nil
+	mgr.demux.removeDevice(dev)
+	return nil
 }
 
 func (mgr *Manager) Close() error {
@@ -85,21 +116,75 @@ func (mgr *Manager) Close() error {
 	return errors.Join(errs...)
 }
 
+func newEventDemux(rd *ringbuf.Reader) *eventDemux {
+	return &eventDemux{
+		rd:     rd,
+		devMap: make(map[uint32]chan Event),
+	}
+}
+
+func (demux *eventDemux) addDevice(dev uint32, eventChan chan Event) {
+	demux.devMapLock.Lock()
+	defer demux.devMapLock.Unlock()
+
+	demux.devMap[dev] = eventChan
+}
+
+func (demux *eventDemux) removeDevice(dev uint32) {
+	demux.devMapLock.Lock()
+	defer demux.devMapLock.Unlock()
+
+	delete(demux.devMap, dev)
+}
+
+func (demux *eventDemux) run() error {
+	for {
+		record, err := demux.rd.Read()
+		if err != nil {
+			if errors.Is(err, ringbuf.ErrClosed) {
+				return nil
+			}
+			return fmt.Errorf("reading ringbuf: %w", err)
+		}
+
+		var entry Event
+		err = binary.Read(bytes.NewBuffer(record.RawSample), binary.LittleEndian, &entry)
+		if err != nil {
+			return fmt.Errorf("decoding btrfswatch event: %w", err)
+		}
+
+		demux.devMapLock.RLock()
+
+		c, ok := demux.devMap[entry.DevId]
+		if !ok {
+			return fmt.Errorf("devid %d does not exist", entry.DevId)
+		}
+
+		// don't block other streams while waiting for one
+		select {
+		case c <- entry:
+		default:
+		}
+
+		demux.devMapLock.RUnlock()
+	}
+}
+
+func (demux *eventDemux) close() error {
+	return demux.rd.Close()
+}
+
 func (evtrdr *EventReader) Read() (*Event, error) {
-	record, err := evtrdr.rd.Read()
-	if err != nil {
-		return nil, err
+	event, ok := <-evtrdr.eventChan
+	if !ok {
+		return nil, errors.New("reader is closed")
 	}
 
-	var entry Event
-	err = binary.Read(bytes.NewBuffer(record.RawSample), binary.LittleEndian, &entry)
-	if err != nil {
-		return nil, fmt.Errorf("decoding btrfswatch event: %w", err)
-	}
-
-	return &entry, nil
+	return &event, nil
 }
 
 func (evtrdr *EventReader) Close() error {
-	return evtrdr.rd.Close()
+	evtrdr.mgr.UnregisterDevice(evtrdr.dev)
+	close(evtrdr.eventChan)
+	return nil
 }

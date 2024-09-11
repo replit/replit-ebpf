@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/cilium/ebpf/ringbuf"
 	"github.com/google/uuid"
 
 	"github.com/replit/replit-ebpf/btrfswatch"
@@ -54,10 +53,7 @@ func (s *Service) MonitorBtrfs(
 
 		entry, err := rd.Read()
 		if err != nil {
-			if errors.Is(err, ringbuf.ErrClosed) {
-				return nil
-			}
-			return fmt.Errorf("reading ringbuf: %w", err)
+			return fmt.Errorf("reading event: %w", err)
 		}
 
 		id, err := uuid.FromBytes(entry.Fsid[:])
