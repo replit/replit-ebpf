@@ -28,7 +28,7 @@ type eventDemux struct {
 	rd *ringbuf.Reader
 
 	devMapLock sync.RWMutex
-	devMap     map[uint32]chan Event
+	devMap     map[uint32]map[chan Event]struct{}
 }
 
 type EventReader struct {
@@ -94,13 +94,13 @@ func (mgr *Manager) RegisterDevice(dev uint32) (*EventReader, error) {
 	}, nil
 }
 
-func (mgr *Manager) UnregisterDevice(dev uint32) error {
+func (mgr *Manager) UnregisterDevice(dev uint32, eventChan chan Event) error {
 	err := mgr.objs.btrfswatchMaps.RegisteredDevices.Delete(dev)
 	if err != nil {
 		return fmt.Errorf("RegisteredDevices.Delete: %w", err)
 	}
 
-	mgr.demux.removeDevice(dev)
+	mgr.demux.removeDevice(dev, eventChan)
 	return nil
 }
 
@@ -118,7 +118,7 @@ func (mgr *Manager) Close() error {
 func newEventDemux(rd *ringbuf.Reader) *eventDemux {
 	return &eventDemux{
 		rd:     rd,
-		devMap: make(map[uint32]chan Event),
+		devMap: make(map[uint32]map[chan Event]struct{}),
 	}
 }
 
@@ -126,14 +126,22 @@ func (demux *eventDemux) addDevice(dev uint32, eventChan chan Event) {
 	demux.devMapLock.Lock()
 	defer demux.devMapLock.Unlock()
 
-	demux.devMap[dev] = eventChan
+	if demux.devMap[dev] == nil {
+		demux.devMap[dev] = make(map[chan Event]struct{})
+	}
+
+	demux.devMap[dev][eventChan] = struct{}{}
 }
 
-func (demux *eventDemux) removeDevice(dev uint32) {
+func (demux *eventDemux) removeDevice(dev uint32, eventChan chan Event) {
 	demux.devMapLock.Lock()
 	defer demux.devMapLock.Unlock()
 
-	delete(demux.devMap, dev)
+	delete(demux.devMap[dev], eventChan)
+
+	if demux.devMap[dev] == nil {
+		delete(demux.devMap, dev)
+	}
 }
 
 func (demux *eventDemux) run() error {
@@ -154,15 +162,17 @@ func (demux *eventDemux) run() error {
 
 		demux.devMapLock.RLock()
 
-		c, ok := demux.devMap[entry.DevId]
+		chans, ok := demux.devMap[entry.DevId]
 		if !ok {
 			return fmt.Errorf("devid %d does not exist", entry.DevId)
 		}
 
-		// don't block other streams while waiting for one
-		select {
-		case c <- entry:
-		default:
+		for c := range chans {
+			// don't block other streams while waiting for one
+			select {
+			case c <- entry:
+			default:
+			}
 		}
 
 		demux.devMapLock.RUnlock()
@@ -183,7 +193,7 @@ func (evtrdr *EventReader) Read() (*Event, error) {
 }
 
 func (evtrdr *EventReader) Close() error {
-	evtrdr.mgr.UnregisterDevice(evtrdr.dev)
+	evtrdr.mgr.UnregisterDevice(evtrdr.dev, evtrdr.eventChan)
 	close(evtrdr.eventChan)
 	return nil
 }
