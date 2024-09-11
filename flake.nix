@@ -15,12 +15,12 @@
           pname = "replit-ebpf";
           version = "0.0.01";
           src = ./.;
-          vendorHash = "sha256-tKRFrGu0rI6UdMIZ1mBjpLP1mZtASleIcllKcvc/gPE=";
+          vendorHash = "sha256-KWsPgQ2F+m1t4p58GtOGKnc/JBCqkPeMS2YEQmptZb8=";
           buildInputs = [ pkgs.makeWrapper ];
         };
 
         devShell = pkgs.mkShell {
-          buildInputs = with pkgs; [ go gopls llvm libbpf ];
+          buildInputs = with pkgs; [ go gopls llvm libbpf protobuf protoc-gen-go protoc-gen-go-grpc ];
         };
       });
 }
