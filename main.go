@@ -2,11 +2,11 @@ package main
 
 import (
 	"flag"
-	"log"
 	"net"
 	"os"
 	"os/signal"
 
+	log "github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
 
 	"github.com/replit/replit-ebpf/btrfswatch"
@@ -15,14 +15,21 @@ import (
 
 func main() {
 	socketName := flag.String("socket-name", "/run/conman/conkid/ebpf.sock", "unix socket to listen on")
+	logJSON := flag.Bool("log-json", false, "format log messages as JSON")
 	flag.Parse()
+
+	if *logJSON {
+		log.SetFormatter(&log.JSONFormatter{})
+	} else {
+		log.SetFormatter(&log.TextFormatter{ForceColors: true})
+	}
 
 	mgr, err := btrfswatch.NewManager()
 	if err != nil {
-		log.Fatal("Initializing btrfswatch:", err)
+		log.WithError(err).Fatal("Initializing btrfswatch")
 	}
 
-	log.Printf("Listening at %s...", *socketName)
+	log.Infof("Listening at %s...", *socketName)
 
 	// exit the program when interrupted.
 	stop := make(chan os.Signal, 5)
@@ -32,12 +39,12 @@ func main() {
 		BtrfswatchMgr: mgr,
 	})
 	if err != nil {
-		log.Fatal("Starting eBPF gRPC service:", err)
+		log.WithError(err).Fatal("Starting eBPF gRPC service")
 	}
 
 	listener, err := net.Listen("unix", *socketName)
 	if err != nil {
-		log.Fatal("Listen on unix socket:", err)
+		log.WithError(err).Fatal("Listen on unix socket")
 	}
 	defer listener.Close()
 
@@ -48,7 +55,7 @@ func main() {
 
 	<-stop
 
-	log.Println("Shutting down...")
+	log.Infoln("Shutting down...")
 	grpcS.GracefulStop()
 	mgr.Close()
 }

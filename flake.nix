@@ -15,8 +15,11 @@
           pname = "replit-ebpf";
           version = "0.0.01";
           src = ./.;
-          vendorHash = "sha256-KWsPgQ2F+m1t4p58GtOGKnc/JBCqkPeMS2YEQmptZb8=";
+          vendorHash = "sha256-bq2FEysBTvn+SHw+tUksUCXu+AMGJ93g+L8L7v6Kdjo=";
           buildInputs = [ pkgs.makeWrapper ];
+
+          # integration tests require a local corrupted disk
+          doCheck = false;
         };
 
         devShell = pkgs.mkShell {

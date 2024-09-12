@@ -1,3 +1,4 @@
 ./replit-ebpf
 ./result
 .direnv/
+integration_tests/disk.img

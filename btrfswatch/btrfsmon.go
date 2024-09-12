@@ -12,6 +12,7 @@ import (
 	"github.com/cilium/ebpf/link"
 	"github.com/cilium/ebpf/ringbuf"
 	"github.com/cilium/ebpf/rlimit"
+	log "github.com/sirupsen/logrus"
 )
 
 //go:generate go run github.com/cilium/ebpf/cmd/bpf2go -target amd64 btrfswatch btrfswatch.c
@@ -172,6 +173,9 @@ func (demux *eventDemux) run() error {
 			select {
 			case c <- entry:
 			default:
+				log.
+					WithField("device", entry.DevId).
+					Warn("dropping message")
 			}
 		}
 
