@@ -1,127 +1,61 @@
 package main
 
-//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -target amd64 bdwatch bdwatch.c
-
 import (
-	"bytes"
-	"encoding/binary"
-	"errors"
 	"flag"
-	"fmt"
-	"log"
+	"net"
 	"os"
 	"os/signal"
-	"syscall"
 
-	"github.com/cilium/ebpf/link"
-	"github.com/cilium/ebpf/ringbuf"
-	"github.com/cilium/ebpf/rlimit"
-	"github.com/google/uuid"
-	"golang.org/x/sys/unix"
+	log "github.com/sirupsen/logrus"
+	"google.golang.org/grpc"
+
+	"github.com/replit/replit-ebpf/btrfswatch"
+	ebpfpb "github.com/replit/replit-ebpf/ebpf"
 )
 
 func main() {
-	device := flag.String("device", "", "device to watch")
+	socketName := flag.String("socket-name", "/run/conman/conkid/ebpf.sock", "unix socket to listen on")
+	logJSON := flag.Bool("log-json", false, "format log messages as JSON")
 	flag.Parse()
 
-	// Remove resource limits for kernels <5.11.
-	if err := rlimit.RemoveMemlock(); err != nil {
-		log.Fatal("Removing memlock:", err)
+	if *logJSON {
+		log.SetFormatter(&log.JSONFormatter{})
+	} else {
+		log.SetFormatter(&log.TextFormatter{ForceColors: true})
 	}
 
-	// Load the compiled eBPF ELF and load it into the kernel.
-	var objs bdwatchObjects
-
-	if err := loadBdwatchObjects(&objs, nil); err != nil {
-		log.Fatal("Loading eBPF objects:", err)
-	}
-	defer objs.Close()
-
-	// Attach count_packets to the network interface.
-	{
-		link, err := link.Kprobe("btrfs_recover_log_trees", objs.BtrfsRecoverLogTrees, &link.KprobeOptions{})
-		if err != nil {
-			log.Fatal("Attaching kprobe:", err)
-		}
-		defer link.Close()
+	mgr, err := btrfswatch.NewManager()
+	if err != nil {
+		log.WithError(err).Fatal("Initializing btrfswatch")
 	}
 
-	{
-		link, err := link.Kretprobe("btrfs_recover_log_trees", objs.BtrfsRecoverLogTreesExit, &link.KprobeOptions{})
-		if err != nil {
-			log.Fatal("Attaching kretprobe:", err)
-		}
-		defer link.Close()
-	}
-
-	log.Println("Waiting...")
+	log.Infof("Listening at %s...", *socketName)
 
 	// exit the program when interrupted.
 	stop := make(chan os.Signal, 5)
 	signal.Notify(stop, os.Interrupt)
 
-	stat, err := os.Stat(*device)
+	ebpfService, err := ebpfpb.NewService(ebpfpb.ServiceOpts{
+		BtrfswatchMgr: mgr,
+	})
 	if err != nil {
-		panic(err)
+		log.WithError(err).Fatal("Starting eBPF gRPC service")
 	}
-	dev := stat.Sys().(*syscall.Stat_t).Rdev
-	fmt.Printf("dev %d %d:%d\n", dev, unix.Major(dev), unix.Minor(dev))
-	err = objs.bdwatchMaps.RegisteredDevices.Put(convertDevice(stat.Sys().(*syscall.Stat_t).Rdev), true)
+
+	listener, err := net.Listen("unix", *socketName)
 	if err != nil {
-		panic(err)
+		log.WithError(err).Fatal("Listen on unix socket")
 	}
+	defer listener.Close()
 
-	rd, err := ringbuf.NewReader(objs.BtrfsRecoverLogTreesErrors)
-	if err != nil {
-		panic(err)
-	}
+	grpcS := grpc.NewServer()
+	ebpfpb.RegisterEbpfServer(grpcS, ebpfService)
 
-	go func() {
-		<-stop
-		rd.Close()
-	}()
+	go grpcS.Serve(listener)
 
-	var entry bdwatchEvent
-	for {
-		select {
-		case <-stop:
-			return
-		default:
-		}
-		record, err := rd.Read()
-		if err != nil {
-			if errors.Is(err, ringbuf.ErrClosed) {
-				return
-			}
-			panic(err)
-		}
+	<-stop
 
-		err = binary.Read(bytes.NewBuffer(record.RawSample), binary.LittleEndian, &entry)
-		if err != nil {
-			panic(err)
-		}
-
-		id, err := uuid.FromBytes(entry.Fsid[:])
-		if err != nil {
-			panic(err)
-		}
-		log.Printf("Major:%d Minor:%d UUID:%s Ret: %d",
-			major(entry.DevId),
-			minor(entry.DevId),
-			id,
-			entry.Ret,
-		)
-	}
-}
-
-func major(dev uint32) uint32 {
-	return dev >> 20
-}
-func minor(dev uint32) uint32 {
-	return dev & ((1 << 20) - 1)
-}
-func convertDevice(dev uint64) uint32 {
-	minor := uint32(unix.Minor(dev))
-	major := uint32(unix.Major(dev))
-	return (major << 20) | minor
+	log.Infoln("Shutting down...")
+	grpcS.GracefulStop()
+	mgr.Close()
 }

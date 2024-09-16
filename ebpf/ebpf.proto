@@ -1,0 +1,22 @@
+syntax = "proto3";
+
+package replit.ebpf;
+option go_package = "github.com/replit/replit-ebpf/ebpf";
+
+message MonitorBtrfsRequest {
+  uint32 major = 1;
+  uint32 minor = 2;
+}
+
+message MonitorBtrfsResponse {
+  uint32 major = 1;
+  uint32 minor = 2;
+  string uuid = 3;
+  int32 ret = 4;
+}
+
+// The Ebpf service allows interacting with running eBPF programs.
+service Ebpf {
+  // MonitorBtrfs watches the given device for failed mounts due to corruption in the btrfs log tree.
+  rpc MonitorBtrfs(MonitorBtrfsRequest) returns (stream MonitorBtrfsResponse);
+}
