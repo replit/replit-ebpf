@@ -15,7 +15,7 @@
           pname = "replit-ebpf";
           version = "0.0.01";
           src = ./.;
-          vendorHash = "sha256-bq2FEysBTvn+SHw+tUksUCXu+AMGJ93g+L8L7v6Kdjo=";
+          vendorHash = "sha256-HhteZpiLD20BNPwpE3TfzflUFZ8bEdVLF/7jbxVawPU=";
           buildInputs = [ pkgs.makeWrapper ];
 
           # integration tests require a local corrupted disk
