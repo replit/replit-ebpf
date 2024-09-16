@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 //go:build ignore
 
 #include "btrfs.h"
