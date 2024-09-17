@@ -1,6 +1,6 @@
 module github.com/replit/replit-ebpf
 
-go 1.22.6
+go 1.21
 
 require (
 	github.com/cilium/ebpf v0.16.0
