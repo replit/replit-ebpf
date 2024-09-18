@@ -7,6 +7,7 @@ import (
 	"os/signal"
 	"path"
 
+	"github.com/coreos/go-systemd/v22/activation"
 	log "github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
 
@@ -15,7 +16,7 @@ import (
 )
 
 func main() {
-	socketName := flag.String("socket-name", "/run/conman/conkid/ebpf.sock", "unix socket to listen on")
+	socketName := flag.String("socket-name", "", "unix socket to listen on")
 	logJSON := flag.Bool("log-json", false, "format log messages as JSON")
 	flag.Parse()
 
@@ -41,22 +42,35 @@ func main() {
 		log.WithError(err).Fatal("Starting eBPF gRPC service")
 	}
 
-	err = os.MkdirAll(path.Dir(*socketName), 0o755)
-	if err != nil {
-		log.WithError(err).Fatal("Creating socket directory")
-	}
-	err = os.RemoveAll(*socketName)
-	if err != nil {
-		log.WithError(err).Fatal("Removing socket")
+	var listener net.Listener
+	if *socketName == "" {
+		listeners, err := activation.Listeners()
+		if err != nil {
+			log.WithError(err).Fatal("Getting systemd sockets")
+		}
+		if len(listeners) != 1 {
+			log.Fatalf("Wrong number of sockets, got %d", len(listeners))
+		}
+
+		listener = listeners[0]
+	} else {
+		err = os.MkdirAll(path.Dir(*socketName), 0o755)
+		if err != nil {
+			log.WithError(err).Fatal("Creating socket directory")
+		}
+		err = os.RemoveAll(*socketName)
+		if err != nil {
+			log.WithError(err).Fatal("Removing socket")
+		}
+
+		listener, err = net.Listen("unix", *socketName)
+		if err != nil {
+			log.WithError(err).Fatal("Listen on unix socket")
+		}
+		defer listener.Close()
 	}
 
-	listener, err := net.Listen("unix", *socketName)
-	if err != nil {
-		log.WithError(err).Fatal("Listen on unix socket")
-	}
-	defer listener.Close()
-
-	log.Infof("Listening at %s...", *socketName)
+	log.Infof("Listening at %s...", listener.Addr().String())
 
 	grpcS := grpc.NewServer()
 	ebpfpb.RegisterEbpfServer(grpcS, ebpfService)
