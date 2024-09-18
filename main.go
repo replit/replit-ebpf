@@ -5,6 +5,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"path"
 
 	log "github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
@@ -29,8 +30,6 @@ func main() {
 		log.WithError(err).Fatal("Initializing btrfswatch")
 	}
 
-	log.Infof("Listening at %s...", *socketName)
-
 	// exit the program when interrupted.
 	stop := make(chan os.Signal, 5)
 	signal.Notify(stop, os.Interrupt)
@@ -42,11 +41,22 @@ func main() {
 		log.WithError(err).Fatal("Starting eBPF gRPC service")
 	}
 
+	err = os.MkdirAll(path.Dir(*socketName), 0o755)
+	if err != nil {
+		log.WithError(err).Fatal("Creating socket directory")
+	}
+	err = os.RemoveAll(*socketName)
+	if err != nil {
+		log.WithError(err).Fatal("Removing socket")
+	}
+
 	listener, err := net.Listen("unix", *socketName)
 	if err != nil {
 		log.WithError(err).Fatal("Listen on unix socket")
 	}
 	defer listener.Close()
+
+	log.Infof("Listening at %s...", *socketName)
 
 	grpcS := grpc.NewServer()
 	ebpfpb.RegisterEbpfServer(grpcS, ebpfService)
