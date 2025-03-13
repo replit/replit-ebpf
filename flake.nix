@@ -2,7 +2,7 @@
   description = "Replit eBPF";
 
   inputs = {
-    nixpkgs.url = "github:nixos/nixpkgs/nixos-24.05";
+    nixpkgs.url = "github:nixos/nixpkgs/nixos-24.11";
     flake-utils.url = "github:numtide/flake-utils";
   };
 
@@ -11,11 +11,11 @@
     let
       pkgs = nixpkgs.legacyPackages.${system};
      in {
-        packages.default = pkgs.buildGoModule rec {
+        packages.default = pkgs.buildGoModule {
           pname = "replit-ebpf";
           version = "0.0.01";
           src = ./.;
-          vendorHash = "sha256-M6fUOce+IoHwrbFdoT6HybsTroKexblbG6M//ZdFrQw=";
+          vendorHash = "sha256-23sMkROWynDN/qvCvSZgXebezg648OY0jsRccxUkq54=";
           buildInputs = [ pkgs.makeWrapper ];
 
           # integration tests require a local corrupted disk
