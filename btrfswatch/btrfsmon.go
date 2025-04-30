@@ -3,6 +3,7 @@ package btrfswatch
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -187,13 +188,17 @@ func (demux *eventDemux) close() error {
 	return demux.rd.Close()
 }
 
-func (evtrdr *EventReader) Read() (*Event, error) {
-	event, ok := <-evtrdr.eventChan
-	if !ok {
-		return nil, errors.New("reader is closed")
-	}
+func (evtrdr *EventReader) Read(ctx context.Context) (*Event, error) {
+	select {
+	case event, ok := <-evtrdr.eventChan:
+		if !ok {
+			return nil, errors.New("reader is closed")
+		}
+		return &event, nil
 
-	return &event, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
 
 func (evtrdr *EventReader) Close() error {

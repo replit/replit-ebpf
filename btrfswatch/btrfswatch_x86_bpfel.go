@@ -54,9 +54,10 @@ func loadBtrfswatchObjects(obj interface{}, opts *ebpf.CollectionOptions) error 
 type btrfswatchSpecs struct {
 	btrfswatchProgramSpecs
 	btrfswatchMapSpecs
+	btrfswatchVariableSpecs
 }
 
-// btrfswatchSpecs contains programs before they are loaded into the kernel.
+// btrfswatchProgramSpecs contains programs before they are loaded into the kernel.
 //
 // It can be passed ebpf.CollectionSpec.Assign.
 type btrfswatchProgramSpecs struct {
@@ -73,12 +74,19 @@ type btrfswatchMapSpecs struct {
 	RegisteredDevices          *ebpf.MapSpec `ebpf:"registered_devices"`
 }
 
+// btrfswatchVariableSpecs contains global variables before they are loaded into the kernel.
+//
+// It can be passed ebpf.CollectionSpec.Assign.
+type btrfswatchVariableSpecs struct {
+}
+
 // btrfswatchObjects contains all objects after they have been loaded into the kernel.
 //
 // It can be passed to loadBtrfswatchObjects or ebpf.CollectionSpec.LoadAndAssign.
 type btrfswatchObjects struct {
 	btrfswatchPrograms
 	btrfswatchMaps
+	btrfswatchVariables
 }
 
 func (o *btrfswatchObjects) Close() error {
@@ -103,6 +111,12 @@ func (m *btrfswatchMaps) Close() error {
 		m.PendingCalls,
 		m.RegisteredDevices,
 	)
+}
+
+// btrfswatchVariables contains all global variables after they have been loaded into the kernel.
+//
+// It can be passed to loadBtrfswatchObjects or ebpf.CollectionSpec.LoadAndAssign.
+type btrfswatchVariables struct {
 }
 
 // btrfswatchPrograms contains all programs after they have been loaded into the kernel.

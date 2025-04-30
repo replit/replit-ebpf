@@ -23,7 +23,27 @@
         };
 
         devShell = pkgs.mkShell {
-          buildInputs = with pkgs; [ go gopls llvm libbpf protobuf protoc-gen-go protoc-gen-go-grpc ];
+          buildInputs = with pkgs; [
+            bpftools
+            bpftrace
+            apparmor-parser
+            apparmor-bin-utils
+            btrfs-progs
+            libcgroup
+            go
+            gopls
+            clang
+            llvm
+            libbpf
+            protobuf
+            protoc-gen-go
+            protoc-gen-go-grpc
+            grpcurl
+          ];
+
+          hardeningDisable = [
+            "zerocallusedregs"
+          ];
         };
       });
 }
