@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"os"
@@ -13,13 +15,15 @@ import (
 	"syscall"
 	"testing"
 
-	"github.com/replit/replit-ebpf/btrfswatch"
-	ebpfpb "github.com/replit/replit-ebpf/ebpf"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sys/unix"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+
+	"github.com/replit/replit-ebpf/auditwatch"
+	"github.com/replit/replit-ebpf/btrfswatch"
+	ebpfpb "github.com/replit/replit-ebpf/ebpf"
 )
 
 const (
@@ -32,10 +36,11 @@ var (
 
 	tmpDir string
 
-	devPath1 string
-	devPath2 string
-	dev1     uint32
-	dev2     uint32
+	devPath1    string
+	devPath2    string
+	dev1        uint32
+	dev2        uint32
+	profileName string
 )
 
 func TestMain(m *testing.M) {
@@ -48,26 +53,33 @@ func testMain(m *testing.M) int {
 	var err error
 	tmpDir, err = os.MkdirTemp("", "ebpf-test")
 	if err != nil {
-		log.Fatal("Making temp dir:", err)
+		log.Panic("Making temp dir:", err)
 	}
 	defer os.RemoveAll(tmpDir)
 
-	mgr, err := btrfswatch.NewManager()
+	btrfswatchMgr, err := btrfswatch.NewManager()
 	if err != nil {
-		log.Fatal("Initializing btrfswatch:", err)
+		log.Panic("Initializing btrfswatch:", err)
 	}
+	defer btrfswatchMgr.Close()
+	auditwatchMgr, err := auditwatch.NewManager()
+	if err != nil {
+		log.Panic("Initializing auditwatch:", err)
+	}
+	defer auditwatchMgr.Close()
 
 	ebpfService, err := ebpfpb.NewService(ebpfpb.ServiceOpts{
-		BtrfswatchMgr: mgr,
+		BtrfswatchMgr: btrfswatchMgr,
+		AuditwatchMgr: auditwatchMgr,
 	})
 	if err != nil {
-		log.Fatal("Starting eBPF gRPC service:", err)
+		log.Panic("Starting eBPF gRPC service:", err)
 	}
 
 	socketPath := path.Join(tmpDir, socketName)
 	listener, err := net.Listen("unix", socketPath)
 	if err != nil {
-		log.Fatal("Listen on unix socket:", err)
+		log.Panic("Listen on unix socket:", err)
 	}
 	defer listener.Close()
 
@@ -85,25 +97,60 @@ func testMain(m *testing.M) int {
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 	)
 	if err != nil {
-		log.Fatal("Creating gRPC client:", err)
+		log.Panic("Creating gRPC client:", err)
 	}
 	defer conn.Close()
 
 	client = ebpfpb.NewEbpfClient(conn)
 
-	{
-		cleanup, err := setupDevice(&devPath1, &dev1)
-		if err != nil {
-			log.Fatal("setupDevice:", err)
+	if os.Getenv("ONLY_APPARMOR") != "true" {
+		{
+			cleanup, err := setupDevice(&devPath1, &dev1)
+			if err != nil {
+				log.Panic("setupDevice:", err)
+			}
+			defer cleanup()
 		}
-		defer cleanup()
+		{
+			cleanup, err := setupDevice(&devPath2, &dev2)
+			if err != nil {
+				log.Panic("setupDevice:", err)
+			}
+			defer cleanup()
+		}
 	}
-	{
-		cleanup, err := setupDevice(&devPath2, &dev2)
+	if os.Getenv("ONLY_BTRFS") != "true" {
+		dir, err := os.MkdirTemp("", "apparmor")
 		if err != nil {
-			log.Fatal("setupDevice:", err)
+			log.Panic("os.MkdirTemp:", err)
 		}
-		defer cleanup()
+		defer os.RemoveAll(dir)
+		profileName = path.Base(dir)
+		profilePath := path.Join(dir, "apparmor.profile")
+		err = os.WriteFile(
+			profilePath,
+			[]byte(fmt.Sprintf("profile %s flags=(kill,attach_disconnected) {}", profileName)),
+			0o644,
+		)
+		if err != nil {
+			log.Panic("write apparmor.profile:", err)
+		}
+		out, err := exec.Command("apparmor_parser", "--replace", profilePath).CombinedOutput()
+		if err != nil {
+			log.Panicf("apparmor_parser: %s: %v", string(out), err)
+		}
+		defer func() {
+			out, err := exec.Command("apparmor_parser", "--remove", profilePath).CombinedOutput()
+			if err != nil {
+				log.Panicf("apparmor_parser: %s: %v", string(out), err)
+			}
+		}()
+
+		err = os.MkdirAll("/sys/fs/cgroup/test.slice", 0o755)
+		if err != nil {
+			log.Panicf("mkdir test.slice: %v", err)
+		}
+		defer os.Remove("/sys/fs/cgroup/test.slice")
 	}
 
 	return m.Run()
@@ -132,6 +179,9 @@ func setupDevice(path *string, dev *uint32) (func() error, error) {
 }
 
 func TestBasic(t *testing.T) {
+	if os.Getenv("ONLY_APPARMOR") == "true" {
+		t.Skip()
+	}
 	ctx := context.Background()
 
 	devMajor := major(dev1)
@@ -159,6 +209,9 @@ func TestBasic(t *testing.T) {
 }
 
 func TestDemux(t *testing.T) {
+	if os.Getenv("ONLY_APPARMOR") == "true" {
+		t.Skip()
+	}
 	ctx := context.Background()
 
 	devMajor1 := major(dev1)
@@ -208,6 +261,9 @@ func TestDemux(t *testing.T) {
 }
 
 func TestMultipleSubsPerDevice(t *testing.T) {
+	if os.Getenv("ONLY_APPARMOR") == "true" {
+		t.Skip()
+	}
 	ctx := context.Background()
 
 	devMajor := major(dev1)
@@ -251,6 +307,9 @@ func TestMultipleSubsPerDevice(t *testing.T) {
 }
 
 func TestMultipleMessages(t *testing.T) {
+	if os.Getenv("ONLY_APPARMOR") == "true" {
+		t.Skip()
+	}
 	ctx := context.Background()
 
 	devMajor := major(dev1)
@@ -290,6 +349,9 @@ func TestMultipleMessages(t *testing.T) {
 }
 
 func TestMultipleConcurrentStreams(t *testing.T) {
+	if os.Getenv("ONLY_APPARMOR") == "true" {
+		t.Skip()
+	}
 	ctx := context.Background()
 
 	devMajor1 := major(dev1)
@@ -373,4 +435,41 @@ func convertDevice(dev uint64) uint32 {
 	minor := uint32(unix.Minor(dev))
 	major := uint32(unix.Major(dev))
 	return (major << 20) | minor
+}
+
+func TestApparmor(t *testing.T) {
+	if os.Getenv("ONLY_BTRFS") == "true" {
+		t.Skip()
+	}
+
+	ctx := context.Background()
+	stream, err := client.MonitorAppArmorAuditDenials(ctx, &ebpfpb.MonitorAppArmorAuditDenialsRequest{
+		CgroupName: "/test.slice",
+	})
+	require.NoError(t, err)
+
+	responseChan := make(chan *ebpfpb.MonitorAppArmorAuditDenialsResponse, 1024)
+	go func() {
+		defer close(responseChan)
+		for {
+			response, err := stream.Recv()
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			require.NoError(t, err)
+			responseChan <- response
+		}
+	}()
+
+	out, err := exec.Command("cgexec", "-g", "cpu,memory:/test.slice", "aa-exec", "--profile="+profileName, "sh", "echo foo | tee /tmp/example").CombinedOutput()
+	require.Error(t, err, string(out))
+
+	errors := 0
+	for response := range responseChan {
+		if response.Path == "" {
+			continue
+		}
+		errors++
+	}
+	require.Greater(t, errors, 0)
 }

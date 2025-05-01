@@ -15,8 +15,24 @@ message MonitorBtrfsResponse {
   int32 ret = 4;
 }
 
+message MonitorAppArmorAuditDenialsRequest {
+  // The cgroup path (i.e. what /proc/$pid/cgroup would report)
+  // in the init namespace.
+  string cgroup_name = 1;
+}
+
+message MonitorAppArmorAuditDenialsResponse {
+  // The path of the file that resulted in a denial.
+  string path = 1;
+}
+
 // The Ebpf service allows interacting with running eBPF programs.
 service Ebpf {
-  // MonitorBtrfs watches the given device for failed mounts due to corruption in the btrfs log tree.
+  // MonitorBtrfs watches the given device for failed mounts due to corruption
+  // in the btrfs log tree.
   rpc MonitorBtrfs(MonitorBtrfsRequest) returns (stream MonitorBtrfsResponse);
+  // MonitorAppArmorAuditDenials watches the given cgroup for AppArmor denials.
+  // Will close the stream if no denials happened.
+  rpc MonitorAppArmorAuditDenials(MonitorAppArmorAuditDenialsRequest)
+      returns (stream MonitorAppArmorAuditDenialsResponse);
 }

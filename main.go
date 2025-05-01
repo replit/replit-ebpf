@@ -11,6 +11,7 @@ import (
 	log "github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
 
+	"github.com/replit/replit-ebpf/auditwatch"
 	"github.com/replit/replit-ebpf/btrfswatch"
 	ebpfpb "github.com/replit/replit-ebpf/ebpf"
 )
@@ -26,17 +27,25 @@ func main() {
 		log.SetFormatter(&log.TextFormatter{ForceColors: true})
 	}
 
-	mgr, err := btrfswatch.NewManager()
+	btrfswatchMgr, err := btrfswatch.NewManager()
 	if err != nil {
 		log.WithError(err).Fatal("Initializing btrfswatch")
 	}
+	defer btrfswatchMgr.Close()
+
+	auditwatchMgr, err := auditwatch.NewManager()
+	if err != nil {
+		log.WithError(err).Fatal("Initializing auditwatch")
+	}
+	defer auditwatchMgr.Close()
 
 	// exit the program when interrupted.
 	stop := make(chan os.Signal, 5)
 	signal.Notify(stop, os.Interrupt)
 
 	ebpfService, err := ebpfpb.NewService(ebpfpb.ServiceOpts{
-		BtrfswatchMgr: mgr,
+		BtrfswatchMgr: btrfswatchMgr,
+		AuditwatchMgr: auditwatchMgr,
 	})
 	if err != nil {
 		log.WithError(err).Fatal("Starting eBPF gRPC service")
@@ -81,5 +90,4 @@ func main() {
 
 	log.Infoln("Shutting down...")
 	grpcS.GracefulStop()
-	mgr.Close()
 }
