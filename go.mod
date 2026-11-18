@@ -2,7 +2,7 @@ module github.com/replit/replit-ebpf
 
 go 1.23.0
 
-toolchain go1.23.7
+toolchain go1.26.11
 
 require (
 	github.com/cilium/ebpf v0.18.0
